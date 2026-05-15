@@ -48,9 +48,8 @@ def call_claude(messages, max_tokens=1500):
 def extract_from_image(file_bytes: bytes, filename: str) -> dict:
     """Use Claude vision to extract details from NRIC or sales form."""
     ext = Path(filename).suffix.lower()
-    mt = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
-          ".webp":"image/webp"}.get(ext,"image/jpeg")    is_pdf = ext == ".pdf"
     b64 = base64.b64encode(file_bytes).decode()
+    is_pdf = ext == ".pdf"
 
     prompt = """Examine this document. It may be a Malaysian MyKad (NRIC), property sales form, booking form, or OTP.
 Extract ALL available fields and return ONLY a JSON object:
@@ -70,12 +69,30 @@ Extract ALL available fields and return ONLY a JSON object:
 }
 Use empty string if a field is not visible. Return ONLY the JSON."""
 
-    resp = call_claude([{"role":"user","content":[
-        content_block,
-        {"type":"text","text":prompt}
-    ]}])
-    m = re.search(r'\{[\s\S]*\}', resp)
-    return json.loads(m.group()) if m else {}
+    # PDFs use "document" block; images use "image" block
+    if is_pdf:
+        content_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": b64}
+        }
+    else:
+        mt = {".jpg":"image/jpeg",".jpeg":"image/jpeg",
+              ".png":"image/png",".webp":"image/webp"}.get(ext, "image/jpeg")
+        content_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": mt, "data": b64}
+        }
+
+    try:
+        resp = call_claude([{"role":"user","content":[
+            content_block,
+            {"type":"text","text":prompt}
+        ]}])
+        m = re.search(r'\{[\s\S]*\}', resp)
+        return json.loads(m.group()) if m else {}
+    except Exception as e:
+        st.warning(f"\u26a0 Could not read {filename}: {e}. Please fill in details manually.")
+        return {}
 
 def merge_extractions(extractions: list) -> dict:
     merged = {"purchasers": [], "borrowers": []}
